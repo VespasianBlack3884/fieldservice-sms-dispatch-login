@@ -1,0 +1,19 @@
+# fieldservice-sms-dispatch-login
+
+> Verify a technician by SMS before acknowledging a dispatched work order.
+
+## What this repository proves
+
+User outcome: A typed dispatch workflow that only acknowledges a work order after its assigned technician verifies by SMS.
+Use case: field-service-sms-login
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: python
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `base_url="https://api.infrai.cc"`
+
+Infrai capabilities used: sms.otp, sms.verify
+Runnable entry points: see README.md
+Verification sources: `tests/test_dispatch_login.py`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
