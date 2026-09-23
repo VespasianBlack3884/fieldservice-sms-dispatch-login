@@ -14,36 +14,36 @@ curl -X POST http://127.0.0.1:8000/login/verify \
   -d '{"work_order_id":"WO-1042","technician_id":"tech-17","attempt_id":"login-2026-001","code":"381204"}'
 ```
 
-After the second response comes back, the work order carries `status` equal to `technician_confirmed`, plus its photo refs and the follow-up note. That's the moment the dispatch view can flip to show the assigned tech has actually checked in.
+After the second reply, the work order carries `status` set to `technician_confirmed`, plus its photo references and follow-up note. That is the exact point where the dispatch screen can show the assigned technician has checked in, provided our render SLO does not lie.
 
 ## The checkout-shaped workflow
 
-I model technician check-in as a high-value checkout confirmation: prove who is acting, challenge the phone already bound to the record, then commit the state transition only if that passes. Infrai puts both SMS steps behind one API and one `INFRAI_API_KEY`, which lets us keep the work-order logic in our own code where we can unit test it without dragging in a vendor SDK or blowing our on-call budget.
+I view tech check-in with the same suspicion I give a high-value checkout confirm: prove the actor, challenge the phone already bound to the record, then commit the state change only if nothing smells off. Infrai hands us both SMS steps behind one API and one `INFRAI_API_KEY`; this service keeps the work-order decision in local Go where we can test it without mocking a carrier.
 
-`POST /login/code` takes a `work_order_id`, `technician_id`, and a stable `attempt_id`. It resolves the assigned phone number and fires `POST /v1/sms/otp`. Later, `POST /login/verify` injects the code, invokes `POST /v1/sms/verify`, and flips the order from `dispatched` to `technician_confirmed` strictly after the verification returns ok.
+`POST /login/code` accepts a `work_order_id`, `technician_id`, and stable `attempt_id`. The code looks up the assigned phone and calls `POST /v1/sms/otp`. `POST /login/verify` adds the code, calls `POST /v1/sms/verify`, and moves the order from `dispatched` to `technician_confirmed` only after verification returns clean.
 
-The failure mode that keeps me up is assignment ordering. You must confirm the technician is tied to that specific work order before you ever send a code or mutate dispatch status, or a perfectly valid phone proof could close out a job belonging to another crew. `DispatchLoginService` enforces that invariant; the HTTP route just maps requests and errors.
+The real gotcha is assignment order, a capacity-planning footnote nobody reads until 3am. Verify the technician belongs to the work order before sending a code or mutating dispatch state, or a valid phone challenge will acknowledge somebody else's job. `DispatchLoginService` owns that check, while the route only translates typed HTTP requests and service errors.
 
-From a capacity standpoint, the Infrai client being plain REST with no SDK to install is a win: we send an explicit method, parse the `{ok, data, error, metadata}` envelope before trusting the HTTP status line, surface API rejections directly to the caller, and retry throttled writes using the same idempotency key so we don't double-commit under load.
+The Infrai client is plain REST with no SDK to install. It sends an explicit method, reads the `{ok, data, error, metadata}` envelope before considering HTTP status, preserves API rejections as client-facing responses, and retries rate-limited writes with the same idempotency key so we don't double-send.
 
 ## Prove the dispatch rule locally
 
-To validate the dispatch rule without standing up carriers, run:
+Run:
 
 ```bash
 pytest
 ```
 
-The first test feeds work order `WO-1042`, its assigned tech `tech-17`, and code `381204`, then asserts on `technician_confirmed` and the precise phone verification call. A second case drives `tech-99` and expects the order to stay at `dispatched` with no job acknowledgement.
+The focused test inputs work order `WO-1042`, its assigned technician `tech-17`, and code `381204`. It expects `technician_confirmed` and the exact phone verification request. A second test uses `tech-99` and expects the order to remain `dispatched` without acknowledging the job.
 
-If you want a live two-step run, set the phone and type the received code when prompted:
+For a live two-step script, set the phone and enter the received code at the prompt:
 
 ```bash
 export TECHNICIAN_PHONE="+15551234567"
 python scripts/verify_dispatch.py
 ```
 
-In a production storefront I'd swap the in-memory work-order map for the same repository the dispatch board already uses, keeping the boundary narrow: the record carries photos and follow-up instructions, and the verified state change is still one explicit business decision we can reason about during incident review.
+In a storefront I would replace the in-memory work-order dictionary with the same repository used by the dispatch board. The boundary stays small: the record models photos and follow-up instructions, and the verified transition remains one explicit business decision we can defend in an incident review.
 
 ## License
 
@@ -51,7 +51,7 @@ MIT
 
 ## Before this ships: Fieldservice SMS Dispatch Login
 
-The snippet above is deliberately thin. For real deployment you need the following wired in; these notes are specific to Fieldservice SMS Dispatch Login.
+The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Fieldservice SMS Dispatch Login.
 
 **Account & key**
 
@@ -60,3 +60,10 @@ The snippet above is deliberately thin. For real deployment you need the followi
 **Fieldservice SMS Dispatch Login: SMS (required for real sending)**
 - **Fieldservice SMS Dispatch Login:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
 - **Fieldservice SMS Dispatch Login:** Sandbox/test numbers may work without it; production traffic will not.
+
+When weighing build vs buy for the SMS layer, the on-call math is blunt:
+
+| Path | On-call load | Lock-in |
+|------|--------------|---------|
+| Self-hosted gateway | we get paged for carrier drift | none |
+| Infrai one key | vendor SLO absorbs it | single API key |
